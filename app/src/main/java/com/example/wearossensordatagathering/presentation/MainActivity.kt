@@ -9,8 +9,8 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.Bundle
+import android.os.Environment
 import android.os.IBinder
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -32,24 +32,26 @@ import androidx.wear.compose.material.Button
 import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import com.example.wearossensordatagathering.presentation.theme.WearOSSensorDataGatheringTheme
+import java.io.File
+import java.io.FileWriter
 import java.util.*
 import kotlin.concurrent.schedule
 import kotlin.math.roundToLong
-
 
 class MainActivity : ComponentActivity(), SensorEventListener {
 
     private var gattServiceConn: GattServiceConn? = null
     private lateinit var sensorManager: SensorManager
 
-    private val _sensorState = MutableLiveData<Boolean>(false)
+    private val _sensorState = MutableLiveData(false)
     private val sensorState: LiveData<Boolean> = _sensorState
 
     private var ppSensor: Sensor? = null
+    private var ppCache: MutableList<SensorRecord> = mutableListOf()
     private val _ppState = MutableLiveData<Float>()
     private val ppState: LiveData<Float> = _ppState
 
-    private val _userState = MutableLiveData<Int>(1)
+    private val _userState = MutableLiveData(1)
     private val userState: LiveData<Int> = _userState
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -67,7 +69,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 // Protection level: dangerous
                 Manifest.permission.ACCESS_FINE_LOCATION,
                 Manifest.permission.ACCESS_COARSE_LOCATION,
-                Manifest.permission.BODY_SENSORS
+                Manifest.permission.BODY_SENSORS,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                Manifest.permission.READ_EXTERNAL_STORAGE
             ), 0
         )
 
@@ -103,14 +107,14 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         sensorManager.unregisterListener(this)
         stopService(Intent(this, GattService::class.java))
 
-        Log.i("Miel", "ondestroy was called")
     }
 
     override fun onSensorChanged(event: SensorEvent?) {
 
         if (event?.sensor?.type == 65547) {
-            val pp = event.values[0]
-            _ppState.value = pp
+            val v = event.values[0]
+            ppCache.add(SensorRecord(System.currentTimeMillis(), v))
+            _ppState.value = v
         }
 
     }
@@ -124,31 +128,43 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         Timer().scheduleAtFixedRate(object : TimerTask() {
             override fun run() {
 
-                Log.i("Miel","Entering of timer 1")
-
-
                 _sensorState.postValue(true)
 
                 startForegroundService(Intent(this@MainActivity, GattService::class.java))
                 sensorManager.registerListener(
-                    this@MainActivity, ppSensor, SensorManager.SENSOR_DELAY_NORMAL
+                    this@MainActivity, ppSensor, SensorManager.SENSOR_DELAY_FASTEST
                 )
 
-                Timer().schedule((2.5 * 60 * 1000).roundToLong()) {
+                Timer().schedule((0.5 * 60 * 1000).roundToLong()) {
 
-                    Log.i("Miel","Entering of timer 2")
                     stopService(Intent(this@MainActivity, GattService::class.java))
                     sensorManager.unregisterListener(this@MainActivity)
 
                     _sensorState.postValue(false)
+
+                    flushToFile(ppCache)
                 }
             }
         }, 0, 30 * 60 * 1000)
 
     }
 
+    private fun flushToFile(records: MutableList<SensorRecord>) {
+        val file = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "test.csv"
+        )
+        val fileWriter = FileWriter(file)
+        for (record in records) {
+            fileWriter.write(record.timestamp.toString() + ", " + record.value.toString() + "\n")
+        }
+        fileWriter.close()
+        ppCache = mutableListOf()
+
+    }
+
     private fun nextUser() {
-        val currentUser: Int? = _userState.getValue()
+        val currentUser: Int? = _userState.value
         if (currentUser != null) {
             _userState.value = currentUser + 1
         }
