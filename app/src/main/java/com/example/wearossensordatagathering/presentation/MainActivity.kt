@@ -38,18 +38,14 @@ import java.util.*
 import kotlin.concurrent.schedule
 import kotlin.math.roundToLong
 
-class MainActivity : ComponentActivity(), SensorEventListener {
+class MainActivity : ComponentActivity() {
 
     private var gattServiceConn: GattServiceConn? = null
-    private lateinit var sensorManager: SensorManager
+
+    private lateinit var sensorList: List<LoggableSensor>
 
     private val _sensorState = MutableLiveData(false)
     private val sensorState: LiveData<Boolean> = _sensorState
-
-    private var ppSensor: Sensor? = null
-    private var ppCache: MutableList<SensorRecord> = mutableListOf()
-    private val _ppState = MutableLiveData<Float>()
-    private val ppState: LiveData<Float> = _ppState
 
     private val _userState = MutableLiveData(1)
     private val userState: LiveData<Int> = _userState
@@ -57,7 +53,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            WearApp(sensorState, ppState, userState, nextUser = ::nextUser)
+            WearApp(sensorState, userState, nextUser = ::nextUser)
         }
 
         requestPermissions(
@@ -75,8 +71,18 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             ), 0
         )
 
-        sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
-        ppSensor = sensorManager.getDefaultSensor(65547, true)
+        sensorList = listOf(
+            LoggableSensor(65547,"ppSensor",true,this),
+            LoggableSensor(31,"heartBeatSensor",true,this),
+            LoggableSensor(21,"heartRateSensor",true,this),
+            LoggableSensor(5,"lightSensor",true,this),
+            LoggableSensor(65544,"ppgGainSensor",true,this),
+            LoggableSensor(65541,"ppgSensor",true,this),
+            LoggableSensor(17,"sigMotionSensor",true,this),
+            LoggableSensor(4,"gyroscopeSensor",true,this),
+            LoggableSensor(9,"gravitySensor",true,this),
+            LoggableSensor(10,"linAccelerationSensor",true,this),
+        )
 
         looper()
 
@@ -104,23 +110,9 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     override fun onDestroy() {
         super.onDestroy()
 
-        sensorManager.unregisterListener(this)
         stopService(Intent(this, GattService::class.java))
+        sensorList.forEach{ s -> s.stopListening() }
 
-    }
-
-    override fun onSensorChanged(event: SensorEvent?) {
-
-        if (event?.sensor?.type == 65547) {
-            val v = event.values[0]
-            ppCache.add(SensorRecord(System.currentTimeMillis(), v))
-            _ppState.value = v
-        }
-
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        return
     }
 
     private fun looper() {
@@ -131,35 +123,21 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 _sensorState.postValue(true)
 
                 startForegroundService(Intent(this@MainActivity, GattService::class.java))
-                sensorManager.registerListener(
-                    this@MainActivity, ppSensor, SensorManager.SENSOR_DELAY_FASTEST
-                )
+                sensorList.forEach{s -> s.startListening()}
 
                 Timer().schedule((0.5 * 60 * 1000).roundToLong()) {
 
                     stopService(Intent(this@MainActivity, GattService::class.java))
-                    sensorManager.unregisterListener(this@MainActivity)
+                    sensorList.forEach{s -> s.stopListening()}
 
                     _sensorState.postValue(false)
 
-                    flushToFile(ppCache)
+                    if(_userState.value != null){
+                        sensorList.forEach{s -> s.flushToFile(_userState.value!!)}
+                    }
                 }
             }
         }, 0, 30 * 60 * 1000)
-
-    }
-
-    private fun flushToFile(records: MutableList<SensorRecord>) {
-        val file = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            "test.csv"
-        )
-        val fileWriter = FileWriter(file)
-        for (record in records) {
-            fileWriter.write(record.timestamp.toString() + ", " + record.value.toString() + "\n")
-        }
-        fileWriter.close()
-        ppCache = mutableListOf()
 
     }
 
@@ -186,14 +164,12 @@ class MainActivity : ComponentActivity(), SensorEventListener {
 @Composable
 fun WearApp(
     sensorValue: LiveData<Boolean>,
-    ppValue: LiveData<Float>,
     userId: LiveData<Int>,
     nextUser: () -> Unit
 ) {
     WearOSSensorDataGatheringTheme {
 
         val sensorValue by sensorValue.observeAsState()
-        val ppValue by ppValue.observeAsState()
         val userId by userId.observeAsState()
 
         Column(
@@ -206,8 +182,6 @@ fun WearApp(
 
             Text(text = "Current user: $userId")
             Text(text = "Sensors on: $sensorValue")
-
-            Text(text = "Last pp value: $ppValue")
 
             Button(onClick = { nextUser() }) {
                 Text(

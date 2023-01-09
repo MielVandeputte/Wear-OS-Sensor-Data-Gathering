@@ -11,11 +11,11 @@ object BleAdvertiser {
 
     class Callback : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
-            Log.i("Miel", "LE Advertise Started.")
+            Log.i(TAG, "LE Advertise Started.")
         }
 
         override fun onStartFailure(errorCode: Int) {
-            Log.w("Miel", "LE Advertise Failed: $errorCode")
+            Log.w(TAG, "LE Advertise Failed: $errorCode")
         }
     }
 
